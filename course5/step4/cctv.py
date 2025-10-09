@@ -1,10 +1,7 @@
 from pathlib import Path
 import zipfile
 import sys
-
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import Qt
+import cv2
 
 def extract_cctv_zip_if_exists(base_dir: Path) -> Path:
     zip_path = base_dir / "cctv.zip"
@@ -29,77 +26,112 @@ def list_images_in(dir_path: Path) -> list[Path]:
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
     return sorted([p for p in dir_path.iterdir() if p.suffix.lower() in exts])
 
-def run_viewer(images: list[Path]) -> int:
+def detect_person_in_image(image_path: Path) -> tuple[bool, any]:
+    # 이미지 읽기
+    img = cv2.imread(str(image_path))
+    if img is None:
+        return False, None
 
-    class ImageViewer(QWidget):
-        def __init__(self, imgs: list[Path]):
-            super().__init__()
-            self.imgs = imgs
-            self.idx = 0
+    hog = cv2.HOGDescriptor()
+    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
-            self.label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.addWidget(self.label)
+    h, w = img.shape[:2]
 
-            self.setWindowTitle("CCTV Viewer")
-            self.resize(1000, 700)
-            self._orig_pixmap = None
-            self.load_current()
+    # 여러 스케일로 검사
+    found = False
+    for scale_factor in [1.0, 1.5, 2.0, 0.7, 0.5]:
+        scaled_img = cv2.resize(img, None, fx=scale_factor, fy=scale_factor)
 
-        def load_current(self):
-            if not self.imgs:
-                self.label.setText("CCTV 폴더에 표시할 이미지가 없습니다.")
-                return
-            path = self.imgs[self.idx]
-            pix = QPixmap(str(path))
-            if pix.isNull():
-                self.label.setText(f"이미지를 불러올 수 없습니다:\n{path.name}")
-                self._orig_pixmap = None
-            else:
-                self._orig_pixmap = pix
-                self.update_scaled_pixmap()
-            self.setWindowTitle(f"CCTV Viewer — {path.name} ({self.idx+1}/{len(self.imgs)})")
+        # 사람 감지 - 매우 완화된 파라미터
+        boxes, weights = hog.detectMultiScale(
+            scaled_img,
+            winStride=(2, 2),      # 매우 촘촘하게 검색
+            padding=(16, 16),      # 패딩 증가
+            scale=1.02,            # 매우 세밀한 스케일
+            hitThreshold=-1.0      # 임계값을 음수로 설정하여 최대 민감도
+        )
 
-        def update_scaled_pixmap(self):
-            if self._orig_pixmap is None:
-                return
-            avail = self.label.size()
-            if avail.width() > 0 and avail.height() > 0:
-                scaled = self._orig_pixmap.scaled(
-                    avail,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                self.label.setPixmap(scaled)
+        if len(boxes) > 0:
+            found = True
+            break
 
-        def keyPressEvent(self, e):
-            if not self.imgs:
-                return super().keyPressEvent(e)
-            key = e.key()
-            # -> D 키
-            if key in (Qt.Key.Key_Right, Qt.Key.Key_D):
-                self.idx = (self.idx + 1) % len(self.imgs)
-                self.load_current()
-            # <- A 키
-            elif key in (Qt.Key.Key_Left, Qt.Key.Key_A):
-                self.idx = (self.idx - 1) % len(self.imgs)
-                self.load_current()
-            else:
-                super().keyPressEvent(e)
+    return found, img
 
-            # 로딩 뒤 즉시 스케일 갱신 (윈도 크기 변경 없이도 선명도 유지)
-            self.update_scaled_pixmap()
+def viewer_mode(images: list[Path]):
+    """이미지 뷰어 모드: 방향키로 이미지 탐색"""
+    if not images:
+        print("[안내] CCTV 폴더에 이미지가 없습니다.")
+        return
 
-        def resizeEvent(self, e):
-            super().resizeEvent(e)
-            self.update_scaled_pixmap()
+    print(f"\n=== 이미지 뷰어 모드 ===")
+    print(f"총 {len(images)}장의 이미지")
+    print("← 또는 A: 이전 이미지")
+    print("→ 또는 D: 다음 이미지")
+    print("ESC 또는 Q: 종료\n")
 
-    app = QApplication(sys.argv)
-    w = ImageViewer(images)
-    w.show()
-    return app.exec()
+    idx = 0
+    while True:
+        image_path = images[idx]
+        img = cv2.imread(str(image_path))
 
+        if img is not None:
+            # 창 제목에 현재 이미지 정보 표시
+            window_title = f"CCTV Viewer - {image_path.name} ({idx + 1}/{len(images)})"
+            cv2.imshow(window_title, img)
+            print(f"[{idx + 1}/{len(images)}] {image_path.name}")
+
+        key = cv2.waitKey(0) & 0xFF
+
+        # 오른쪽 방향키 또는 D (키코드: 3, 83, 또는 'd')
+        if key == ord('d') or key == ord('D') or key == 3 or key == 83:
+            idx = (idx + 1) % len(images)
+        # 왼쪽 방향키 또는 A (키코드: 2, 82, 또는 'a')
+        elif key == ord('a') or key == ord('A') or key == 2 or key == 82:
+            idx = (idx - 1) % len(images)
+        # ESC 또는 Q
+        elif key == 27 or key == ord('q') or key == ord('Q'):
+            break
+
+        cv2.destroyAllWindows()
+
+    cv2.destroyAllWindows()
+    print("\n[종료] 뷰어 모드를 종료합니다.")
+
+def person_detection_mode(images: list[Path]):
+    """사람 감지 모드: 사람이 있는 이미지만 표시"""
+    if not images:
+        print("[안내] CCTV 폴더에 이미지가 없습니다.")
+        return
+
+    print(f"\n=== 사람 감지 모드 ===")
+    print(f"총 {len(images)}장의 이미지를 검색합니다...")
+    print("엔터키: 다음 검색 진행\n")
+
+    idx = 0
+    while idx < len(images):
+        image_path = images[idx]
+        print(f"[{idx + 1}/{len(images)}] {image_path.name} 검색 중...")
+
+        found, img = detect_person_in_image(image_path)
+        if found:
+            print(f"✓ 사람을 발견했습니다! {image_path.name}")
+
+            # 이미지를 화면에 표시
+            if img is not None:
+                cv2.imshow('CCTV - 사람 감지', img)
+                print("엔터키를 눌러 다음 검색을 진행하세요...\n")
+
+                # 엔터키 입력 대기
+                while True:
+                    key = cv2.waitKey(0)
+                    if key == 13 or key == ord('\n') or key == ord('\r'):  # 엔터키
+                        cv2.destroyAllWindows()
+                        break
+
+        idx += 1
+
+    print("\n[완료] 모든 이미지 검색이 완료되었습니다.")
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     base = Path(__file__).resolve().parent
@@ -108,4 +140,27 @@ if __name__ == "__main__":
 
     if not images:
         print(f"[안내] '{target}' 폴더에 표시할 이미지가 없습니다. (지원 확장자: jpg, jpeg, png, bmp, gif, webp, tif, tiff)")
-    sys.exit(run_viewer(images))
+        sys.exit(0)
+
+    # 모드 선택
+    print("\n" + "="*50)
+    print("CCTV 이미지 분석 프로그램")
+    print("="*50)
+    print("\n모드를 선택하세요:")
+    print("1. 이미지 뷰어 모드 (방향키로 이미지 탐색)")
+    print("2. 사람 감지 모드 (사람이 있는 이미지만 표시)")
+    print("="*50)
+
+    try:
+        choice = input("\n선택 (1 또는 2): ").strip()
+
+        if choice == "1":
+            viewer_mode(images)
+        elif choice == "2":
+            person_detection_mode(images)
+        else:
+            print("[오류] 1 또는 2를 입력해주세요.")
+            sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n\n[종료] 프로그램을 종료합니다.")
+        sys.exit(0)
