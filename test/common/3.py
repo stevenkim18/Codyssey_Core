@@ -47,7 +47,7 @@ def log_to_tuple(log):
     return pairs
 
 def sort_log(tuples):
-    return sorted(tuples, key=lambda x: x[0])
+    return sorted(tuples, key=lambda x: x[0], reverse=True)
 
 def log_to_dict(tuples):
     result = {}

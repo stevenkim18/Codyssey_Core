@@ -1,6 +1,5 @@
 import math
 
-
 def sphere_area(diameter: float, material: str, thickness: float = 1.0) -> tuple[float, float]:
      
     # 이미 입력을 받는 곳에서 예외처리를 해서 매개변수로 들어오는 값이 검증이 되지만
@@ -22,7 +21,7 @@ def sphere_area(diameter: float, material: str, thickness: float = 1.0) -> tuple
         '알루미늄': 2.7,  # g/cm³
         '탄소강': 7.85     # g/cm³
     }
-    
+
     area_m2 = math.pi * (diameter * diameter)
     area_cm2 = area_m2 * 10000  # m² to cm²
     
@@ -38,7 +37,6 @@ def sphere_area(diameter: float, material: str, thickness: float = 1.0) -> tuple
 def main():
     
     try:
-        
         # 입력1. 지름 입력 숫자(float)으로 받고 0보다 작을 때 예외처리
         diameter = float(input("구의 지름을 입력하세요 (cm): "))
         
